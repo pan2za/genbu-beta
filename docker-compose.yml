@@ -1,4 +1,18 @@
-version: '3.4'
+# 显式配置自定义网络，避免网络冲突
+networks:
+  monitoring-network:
+    driver: bridge
+
+# 配置数据卷，实现数据持久化（容器重启数据不丢失）
+volumes:
+  postgres-data:  # Postgres 数据卷
+  grafana-data:   # Grafana 数据卷
+  minio-data:     # MinIO 数据卷
+  mimir-data:     # Mimir 数据卷
+  loki-data:      # Loki 数据卷
+  tempo-data:     # Tempo 数据卷
+  agent-wal:      # Agent WAL 数据卷（替代临时目录 /tmp）
+
 services:
   postgres:
     image: postgres:15
@@ -8,38 +22,67 @@ services:
       - POSTGRES_DB=genbu
     ports:
       - 5432:5432
+    volumes:
+      - postgres-data:/var/lib/postgresql/data  # 挂载 Postgres 数据目录
+    networks:
+      - monitoring-network
+    restart: unless-stopped  # 容器异常退出时自动重启
+
   grafana:
     image: grafana/grafana:latest
     volumes:
       - ./config/datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:z
+      - grafana-data:/var/lib/grafana  # 挂载 Grafana 数据目录（持久化配置）
     environment:
-     - GF_AUTH_ANONYMOUS_ENABLED=true
-     - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
-     - GF_AUTH_DISABLE_LOGIN_FORM=true
-     - GF_FEATURE_TOGGLES_ENABLE=traceqlEditor
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+      - GF_FEATURE_TOGGLES_ENABLE=traceqlEditor
     ports:
-     - 3000:3000
+      - 3000:3000
     labels:
       namespace: monitoring
+    networks:
+      - monitoring-network
+    restart: unless-stopped
+    depends_on:  # 依赖 Mimir、Loki、Tempo，确保先启动后端组件
+      - mimir
+      - loki
+      - tempo
+
   minio:
     image: minio/minio:latest
     environment:
       - MINIO_ROOT_USER=minioadmin
       - MINIO_ROOT_PASSWORD=minioadmin
+      - MINIO_DEFAULT_BUCKETS=metrics,logs,traces  # 自动创建 3 个默认存储桶
     ports:
       - 9000:9000
       - 9001:9001
+    volumes:
+      - minio-data:/data  # 挂载 MinIO 数据目录
+    networks:
+      - monitoring-network
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+
   mimir:
     image: grafana/mimir:latest
     user: root
     volumes:
       - ./config/mimir.yaml:/etc/mimir.yaml:z
+      - mimir-data:/var/lib/mimir  # 挂载 Mimir 数据目录（持久化指标数据）
     command:
       - --config.file=/etc/mimir.yaml
     ports:
       - 0.0.0.0:9009:9009
     labels:
       namespace: monitoring
+    networks:
+      - monitoring-network
+    restart: unless-stopped
+    environment:
+      - MIMIR_STORAGE_DIR=/var/lib/mimir  # 配置 Mimir 存储目录（与卷挂载对应）
 
   loki:
     image: grafana/loki:latest
@@ -49,8 +92,13 @@ services:
       - -table-manager.retention-deletes-enabled=true
     ports:
       - "3100:3100"
+    volumes:
+      - loki-data:/var/lib/loki  # 挂载 Loki 数据目录（持久化日志数据）
     labels:
       namespace: monitoring
+    networks:
+      - monitoring-network
+    restart: unless-stopped
 
   tempo:
     image: grafana/tempo:latest
@@ -62,13 +110,19 @@ services:
       - --compactor.compaction.block-retention=24h
     ports:
       - "8004:80"
+    volumes:
+      - tempo-data:/var/tempo  # 挂载 Tempo 数据目录（持久化链路数据）
     labels:
       namespace: monitoring
+    networks:
+      - monitoring-network
+    restart: unless-stopped
 
   agent:
     image: grafana/agent:latest
     volumes:
       - ./config/agent.yaml:/etc/agent-config/agent.yaml:z
+      - agent-wal:/tmp/agent/wal  # 用持久化卷替代临时目录，保存 WAL 数据
     command:
       - -config.file=/etc/agent-config/agent.yaml
       - -metrics.wal-directory=/tmp/agent/wal
@@ -80,5 +134,9 @@ services:
     depends_on:
       - loki
       - tempo
+      - mimir  # 替换原不存在的 prometheus，依赖 Mimir
     labels:
       namespace: monitoring
+    networks:
+      - monitoring-network
+    restart: unless-stopped
