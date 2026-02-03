@@ -40,8 +40,10 @@ pub async fn login_password<US: UserStore>(
             |u| &u.hash,
         );
 
-        if authn::verify_password(&login_req.password, hash)? && let Some(u) = db_user {
-            return Ok(u.id);
+        if authn::verify_password(&login_req.password, hash)? {
+            if let Some(u) = db_user {
+                return Ok(u.id);
+            }
         }
         Err(APIError::WrongCredentials)
     })
