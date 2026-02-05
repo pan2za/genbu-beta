@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>用户注册</title>
+    <style>
+        /* 简单样式优化，提升页面体验 */
+        .register-form {
+            margin: 50px auto;
+            width: 350px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            padding: 20px;
+            border: 1px solid #eee;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.05);
+        }
+        .form-title {
+            text-align: center;
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+        input {
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        input:focus {
+            outline: none;
+            border-color: #42b983;
+            box-shadow: 0 0 3px rgba(66, 185, 131, 0.3);
+        }
+        button {
+            padding: 10px;
+            background-color: #42b983;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover {
+            background-color: #359469;
+        }
+        /* 新增：链接样式，与页面风格统一 */
+        .login-link {
+            text-align: center;
+            font-size: 13px;
+            color: #666;
+            margin-top: 5px;
+        }
+        .login-link a {
+            color: #42b983;
+            text-decoration: none;
+        }
+        .login-link a:hover {
+            text-decoration: underline;
+        }
+        .result {
+            margin: 0 auto;
+            width: 350px;
+            text-align: center;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .success {
+            color: #359469;
+            border: 1px solid #d4f3e6;
+            background-color: #f8fdfb;
+        }
+        .error {
+            color: #dc3545;
+            border: 1px solid #f8d7da;
+            background-color: #fff5f7;
+        }
+    </style>
+</head>
+<body>
+    <div class="register-form">
+        <div class="form-title">用户注册</div>
+        <input type="email" id="email" placeholder="请输入邮箱（如：xxx@xxx.com）">
+        <input type="text" id="name" placeholder="请输入用户名">
+        <input type="password" id="password" placeholder="请输入密码（建议包含字母和数字）">
+        <button onclick="handleRegister()">提交注册</button>
+        
+        <!-- 新增：跳转到 login.html 的链接（核心需求） -->
+        <div class="login-link">
+            已有账号？请在命令行下执行login.sh来获取httponly的cookie
+        </div>
+    </div>
+    <!-- 用于展示注册结果（成功显示用户ID，失败显示错误信息） -->
+    <div class="result" id="result"></div>
+
+    <script>
+        // 注册处理核心函数
+        async function handleRegister() {
+            // 1. 获取表单输入值
+            const email = document.getElementById('email').value.trim();
+            const name = document.getElementById('name').value.trim();
+            const password = document.getElementById('password').value.trim();
+            const resultDom = document.getElementById('result');
+
+            // 2. 前端简单校验（防止空数据提交）
+            if (!email) {
+                showResult('错误：邮箱不能为空！', false);
+                return;
+            }
+            if (!name) {
+                showResult('错误：用户名不能为空！', false);
+                return;
+            }
+            if (!password) {
+                showResult('错误：密码不能为空！', false);
+                return;
+            }
+            // 简单邮箱格式校验（基本匹配，复杂校验可根据需求扩展）
+            const emailReg = /^[a-zA-Z0-9._%-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,6}$/;
+            if (!emailReg.test(email)) {
+                showResult('错误：请输入合法的邮箱格式！', false);
+                return;
+            }
+
+            try {
+                // 3. 构造请求体（与接口要求一致：email、name、password）
+                const requestBody = {
+                    email: email,
+                    name: name,
+                    password: password
+                };
+
+                // 4. 发送 POST 请求到 /api/register 接口
+                const response = await fetch('http://localhost:8080/api/register', {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json' // 声明请求体为 JSON 格式
+                    },
+                    body: JSON.stringify(requestBody) // 转换为 JSON 字符串提交
+                });
+
+                // 5. 处理接口响应结果
+                if (response.ok) {
+                    // 5.1 解析后端返回的 JSON 数据（包含用户 ID）
+                    const responseData = await response.json();
+                    
+                    // 5.2 提取并展示用户 ID（核心需求）
+                    // 兼容后端返回字段可能为 `user_id` 或 `id`，按需调整
+                    const userId = responseData.user_id || responseData.id;
+                    if (userId) {
+                        showResult(`注册成功！你的用户 ID：<strong>${userId}</strong>`, true);
+                    } else {
+                        showResult(`注册成功！后端返回数据：${JSON.stringify(responseData)}（未提取到用户 ID）`, true);
+                    }
+
+                    // 可选：清空表单
+                    document.getElementById('email').value = '';
+                    document.getElementById('name').value = '';
+                    document.getElementById('password').value = '';
+                } else {
+                    // 5.3 处理接口返回的业务错误（如 400 邮箱已存在）
+                    const errorData = await response.json().catch(() => ({}));
+                    const errorMsg = errorData.message || `请求失败，状态码：${response.status}`;
+                    showResult(`注册失败！${errorMsg}`, false);
+                }
+            } catch (error) {
+                // 6. 处理网络错误（如后端服务未启动、跨域问题）
+                showResult(`请求异常！错误信息：${error.message}`, false);
+                console.error('注册请求失败详情：', error);
+            }
+        }
+
+        // 辅助函数：统一展示结果信息
+        function showResult(msg, isSuccess) {
+            const resultDom = document.getElementById('result');
+            resultDom.innerHTML = msg;
+            resultDom.className = isSuccess ? 'result success' : 'result error';
+        }
+    </script>
+</body>
+</html>
